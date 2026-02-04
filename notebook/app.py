@@ -159,7 +159,7 @@ def get_vector_db():
     print("--- Creating NEW FAISS Database ---")
     st.warning("Database nahi mila. Naya knowledge base ban raha hai, thora intezar karein...")
     
-    pdf_path = r"../data/pdf"
+    pdf_path = r"..\data\pdf"
     
     if not os.path.exists(pdf_path):
         st.error(f"PDF folder nahi mila: {pdf_path}")
