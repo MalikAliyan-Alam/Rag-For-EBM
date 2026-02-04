@@ -1,0 +1,16 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Vector DB / Chroma
+data/vector_store/
+*.sqlite3
+
+
+# Virtual environments
+.venv
+.env
