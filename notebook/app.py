@@ -146,7 +146,7 @@ from pathlib import Path
 @st.cache_resource # Streamlit caching for resource-intensive functions
 def get_vector_db():
     # Folder ka path jahan FAISS save hoga
-    persist_dir = r"D:\Rag system - Copy\faiss_db" 
+    persist_dir = r"../faiss_db" 
     embeddings = SimpleEmbeddings()
     
     # Agar Database pehle se bana hua hai toh use load karo
@@ -159,7 +159,7 @@ def get_vector_db():
     print("--- Creating NEW FAISS Database ---")
     st.warning("Database nahi mila. Naya knowledge base ban raha hai, thora intezar karein...")
     
-    pdf_path = r"D:\Rag system - Copy\data\pdf"
+    pdf_path = r"../data/pdf"
     
     if not os.path.exists(pdf_path):
         st.error(f"PDF folder nahi mila: {pdf_path}")
