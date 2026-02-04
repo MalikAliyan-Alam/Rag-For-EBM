@@ -146,7 +146,12 @@ from pathlib import Path
 @st.cache_resource # Streamlit caching for resource-intensive functions
 def get_vector_db():
     # Folder ka path jahan FAISS save hoga
-    persist_dir = r"../faiss_db" 
+    BASE_DIR = Path(__file__).resolve().parent.parent
+    PDF_DIR = BASE_DIR / "data" / "pdf"
+    PERSIST_DIR = BASE_DIR / "faiss_db"
+    persist_dir = str(PERSIST_DIR)
+    pdf_path = str(PDF_DIR)
+
     embeddings = SimpleEmbeddings()
     
     # Agar Database pehle se bana hua hai toh use load karo
@@ -159,7 +164,9 @@ def get_vector_db():
     print("--- Creating NEW FAISS Database ---")
     st.warning("Database nahi mila. Naya knowledge base ban raha hai, thora intezar karein...")
     
-    pdf_path = r"..\data\pdf"
+    # pdf_path = r"..\data\pdf"
+
+    
     
     if not os.path.exists(pdf_path):
         st.error(f"PDF folder nahi mila: {pdf_path}")
