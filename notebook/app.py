@@ -4,6 +4,8 @@ from dotenv import load_dotenv
 from pathlib import Path
 from typing import List
 import numpy as np
+import httpx
+from rank_bm25 import BM25Okapi
 
 # LangChain & AI Imports
 from langchain_groq import ChatGroq
@@ -12,6 +14,9 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
 from sentence_transformers import SentenceTransformer
 from langchain_core.embeddings import Embeddings
+
+import os
+os.environ['CURL_CA_BUNDLE'] = '' # SSL check bypass karne ka naya tareeka
 
 load_dotenv()
 
@@ -31,16 +36,20 @@ class AdvancedRAGPipeline:
         self.llm = llm
         self.history = []
 
-    def query(self, question: str, top_k: int = 3, min_score: float = 0.1, summarize: bool = False):
+    def query(self, question: str, top_k: int = 6, min_score: float = 0.1, summarize: bool = False):
         # 1. Database se chunks mangwao
 
 
         # HYDE Question Expansion
         expansion_prompt = f"""
-        You are an AI assistant that re-writes user queries to find better matches in academic PDFs.
-        The user asked: "{question}"
-        Generate 3 different versions of this question that focus on academic terminology, 
-        key concepts, and strategic management language.
+        You are a Strategic Advisor for C-suite executives. 
+        The user (CEO/CTO) asked: "{question}"
+
+        Re-write this into 3 versions that search for:
+        1. Strategic risks and decision-making frameworks.
+        2. Systematic errors in organizational judgment.
+        3. Evidence-based solutions from behavioral science.
+
         Output only the queries, one per line.
         """
         expanded_queries_response = self.llm.invoke(expansion_prompt)
@@ -52,13 +61,35 @@ class AdvancedRAGPipeline:
             all_docs.extend(self.retriever.invoke(q))
         
         # Duplicate chunks khatam karne ke liye (Simple set logic)
-        unique_docs = {doc.page_content: doc for doc in all_docs}.values()
-        relevant_chunks = list(unique_docs)[:top_k]
+        unique_docs = list({doc.page_content: doc for doc in all_docs}.values())
+        print(f"Total Unique Docs found: {len(unique_docs)}")
 
-        retrieved_docs = self.retriever.invoke(question)
+        # --- 2. NEW ADDITION: HYBRID BM25 RANKING ---
+        # Ye chunks ko keyword matching ke hissab se dobara rank karega
+        tokenized_corpus = [doc.page_content.split() for doc in unique_docs]
+        bm25 = BM25Okapi(tokenized_corpus)
+        bm25_hits = bm25.get_top_n(question.split(), unique_docs, n=len(unique_docs))
+
+        # --- 3. NEW ADDITION: CRAG GRADER --
+        # Ye nigehban (guard) ki tarah har chunk ko check karega
+        relevant_chunks = []
+        for doc in bm25_hits[:5]: # Top 5 candidates uthaye
+            grader_prompt = f"""As an academic evaluator, determine if the following text snippet is RELEVANT to the question: "{question}".
+            Answer 'YES' if the snippet contains related concepts, theories, or keywords. 
+            Answer 'NO' only if the snippet is completely irrelevant (e.g., table of contents, headers).
+            Snippet: {doc.page_content}
+            Answer only YES or NO:"""
+            
+            grade = self.llm.invoke(grader_prompt).content.strip().upper()
+            if "YES" in grade:
+                relevant_chunks.append(doc)
+            if len(relevant_chunks) >= top_k: # Jab top_k mil jayein toh ruk jao
+                break
         
-        # Sirf top_k = 3 chunks uthao aur unka text milao
-        relevant_chunks = retrieved_docs[:top_k]
+        # Fallback: Agar CRAG ko kuch na mile toh BM25 ke top results use karein
+        if not relevant_chunks:
+            relevant_chunks = bm25_hits[:top_k]
+        
         context = "\n".join([doc.page_content for doc in relevant_chunks])
         
         # LLM ko prompt bhejo
@@ -69,6 +100,7 @@ class AdvancedRAGPipeline:
         You are designed to assist C-suite executives in strategic decision-making based on rigorous academic literature.
 
         ###TASK:
+        Always look at the metadata provided in the context blocks to identify the Book Name and Page Number.   
         Answer the user's question using ONLY the provided context. If the exact answer is not there, but related concepts are discussed (e.g., 'Structured Data' for 'Knowledge Graphs'), use that information to explain.
 
         ###STRICT RULES:
@@ -80,19 +112,26 @@ class AdvancedRAGPipeline:
         - "Grounding": If the answer is not in the Context, you MUST admit it. 
         - "Zero-External Knowledge": Do not use your own training data or general knowledge. 
         - "Source Integrity": Only provide information that can be traced back to the retrieved snippets.
+        - "Conciseness": Be concise and to the point, without adding any fluff or interpretation.
+        - If the answer is not in the provided CONTEXT, strictly say you don't know. DO NOT use external links like Wikipedia.
 
         ### INSTRUCTIONS:
+
         1. **Analyze with Type 2 Thinking**: Carefully evaluate the Context to find direct or semantic answers to the Question.
         2. **Strict Boundary**: If the Context does not contain the answer, say: "I am sorry, but the provided documentation does not contain information to answer this question."
         3. **Professional Tone**: Maintain a scholarly, objective, and concise tone (referencing Rousseau, 2006 style).
         4. **Citation (If available)**: If the context mentions authors (e.g., Pan et al., Davis, or Manning), include them in your response.
         5. **Summarization**: If the user requested a summary, distill the retrieved evidence without adding external interpretation.
+        6. "If related concepts are discussed (e.g., System 1 for intuition), use that context to answer."
+        7. Use the 'Book' name from the sources to identify the author (e.g., if Book is Rousseau (2006).pdf, refer to the author as Rousseau)
+
 
         ### WHAT TO AVOID:
         - NO Hallucinations.
         - NO Phrases like "Based on my knowledge" or "Commonly known as". 
         - NO Creative writing or making up facts to be "helpful".
 
+        
         ----------------
         CONTEXT:
         {context}
@@ -138,8 +177,8 @@ class AdvancedRAGPipeline:
             'sources': sources_info
         }
 # --- Setup Functions with Caching ---
-import os
-from pathlib import Path
+# import os
+# from pathlib import Path
 
 # ... (Baqi class aur imports)
 
@@ -185,7 +224,7 @@ def get_vector_db():
         st.stop()
 
     # Text splitting (TPM limit ke liye 500 best hai)
-    text_splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50)
+    text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
     splits = text_splitter.split_documents(documents)
     
     # FAISS Database banana
@@ -195,7 +234,7 @@ def get_vector_db():
     # FAISS local folder mein 2 files save karta hai: index.faiss aur index.pkl
     vectorstore.save_local(persist_dir)
     
-    st.success("FAISS Database kamyabi se ban gaya aur save ho gaya!")
+    st.success("FAISS Database has been created and saved successfully!")
     print("--- FAISS Saved Successfully ---")
     
     return vectorstore
@@ -207,14 +246,18 @@ st.title("🤖 RAG ChatBot")
 # Sidebar settings
 st.sidebar.header("Pipeline Settings")
 show_summary = st.sidebar.checkbox("Show Summary", value=True)
-num_chunks = st.sidebar.slider("Chunks to retrieve", 1, 5, 3)
+num_chunks = st.sidebar.slider("Chunks to retrieve", 1, 7, 5)
 
 # Initialize Components
 vector_db = get_vector_db()
 llm = ChatGroq(
-    groq_api_key=os.getenv("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"),
+    groq_api_key=os.getenv("GROQ_API_KEY"),
     model_name="llama-3.3-70b-versatile",
-    temperature=0
+    http_client=httpx.Client(verify=False), # Ye line security checks bypass karegi
+    # request_timeout=60.0
+    request_timeout=120.0, 
+    # connection retry enable karein
+    max_retries=3
 )
 adv_rag = AdvancedRAGPipeline(vector_db.as_retriever(), llm)
 
