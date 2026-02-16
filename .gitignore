@@ -13,4 +13,4 @@ data/vector_store/
 
 # Virtual environments
 .venv
-.env
+
